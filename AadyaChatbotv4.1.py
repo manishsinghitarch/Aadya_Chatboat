@@ -195,26 +195,41 @@ if st.session_state["complaint_mode"]:
             st.warning("⚠️ Please fill all required fields before submitting.")
 else:
     # ---------- Normal Chatbot Behavior ----------
-    unique_key = f"chat_input_{int(time.time())}"  # ✅ unique every rerun
+    unique_key = f"chat_input_{st.session_state['input_key']}"
     user_query = st.text_input("💬 Type your question:", key=unique_key)
 
-    if user_query:
-        st.session_state["last_activity"] = time.time()
+    # only proceed if user actually typed something
+    if user_query and user_query.strip():
+        st.session_state["last_activity"] = time.time()  # 🕒 update last activity
         st.session_state["messages"].append({"role": "user", "content": user_query})
+
+        # Load FAQ only once per session (cache already used)
         docs = load_faq()
-        chain = build_bot(docs)
 
-        if st.session_state["admission_mode"]:
-            answer = chain.run(f"Admission details for {user_query}")
-        elif st.session_state["schedule_mode"]:
-            answer = chain.run(f"Class schedule for {user_query}")
-        elif st.session_state["fees_mode"]:
-            answer = chain.run(f"Fee details for {user_query}")
-        elif st.session_state["exam_mode"]:
-            answer = chain.run(f"Exam details for {user_query}")
-        else:
-            answer = chain.run(user_query)
+        # Build bot once and reuse
+        if "qa_chain" not in st.session_state:
+            st.session_state["qa_chain"] = build_bot(docs)
+        chain = st.session_state["qa_chain"]
 
-        st.session_state["messages"].append({"role": "bot", "content": answer})
+        # ---------- Run the query ----------
+        with st.spinner("🤖 Thinking..."):
+            try:
+                if st.session_state["admission_mode"]:
+                    answer = chain.run(f"Admission details for {user_query}")
+                elif st.session_state["schedule_mode"]:
+                    answer = chain.run(f"Class schedule for {user_query}")
+                elif st.session_state["fees_mode"]:
+                    answer = chain.run(f"Fee details for {user_query}")
+                elif st.session_state["exam_mode"]:
+                    answer = chain.run(f"Exam details for {user_query}")
+                else:
+                    answer = chain.run(user_query)
+
+                st.session_state["messages"].append({"role": "bot", "content": answer})
+            except Exception as e:
+                st.error(f"❌ Error during response generation: {e}")
+                st.session_state["messages"].append({"role": "bot", "content": "⚠️ Sorry, I ran into an issue while fetching your answer."})
+
+        # update chat input key to avoid duplicate widget IDs
         st.session_state["input_key"] += 1
         st.rerun()
