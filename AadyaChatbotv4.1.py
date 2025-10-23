@@ -41,11 +41,17 @@ def load_faq():
             st.stop()
 
         if cat_col:
-            docs = [f"Category: {row[cat_col]}\nQ: {row[q_col]}\nA: {row[a_col]}" 
-                    for _, row in df.iterrows() if pd.notna(row[q_col]) and pd.notna(row[a_col])]
+            docs = [
+                f"Category: {row[cat_col]}\nQ: {row[q_col]}\nA: {row[a_col]}"
+                for _, row in df.iterrows()
+                if pd.notna(row[q_col]) and pd.notna(row[a_col])
+            ]
         else:
-            docs = [f"Q: {row[q_col]}\nA: {row[a_col]}" 
-                    for _, row in df.iterrows() if pd.notna(row[q_col]) and pd.notna(row[a_col])]
+            docs = [
+                f"Q: {row[q_col]}\nA: {row[a_col]}"
+                for _, row in df.iterrows()
+                if pd.notna(row[q_col]) and pd.notna(row[a_col])
+            ]
         return docs
     except Exception as e:
         st.error(f"❌ Failed to load Google Sheet: {e}")
@@ -59,17 +65,35 @@ def build_bot(docs):
     llm = ChatOpenAI(model="gpt-4-turbo")
     return RetrievalQA.from_chain_type(llm, retriever=retriever)
 
+# ---------- Complaint Logging ----------
+def save_complaint(name, contact, category, complaint):
+    file_name = "College_Complaints_Log.csv"
+    data = {
+        "Timestamp": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
+        "Name": [name],
+        "Contact": [contact],
+        "Category": [category],
+        "Complaint": [complaint],
+    }
+    df_new = pd.DataFrame(data)
+    if os.path.exists(file_name):
+        df_existing = pd.read_csv(file_name)
+        df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+        df_combined.to_csv(file_name, index=False)
+    else:
+        df_new.to_csv(file_name, index=False)
+    return True
+
 # ---------- Helper ----------
 def reset_all():
     for k in ["admission_mode", "schedule_mode", "fees_mode", "exam_mode", "complaint_mode"]:
         st.session_state[k] = False
     st.session_state["messages"] = []
     st.session_state["input_key"] += 1
-    st.session_state["last_activity"] = time.time()  # 🕒 reset timer
+    st.session_state["last_activity"] = time.time()
 
 # ---------- 🕒 SESSION TIMEOUT FEATURE ----------
 def check_inactivity():
-    """If inactive for 10 minutes, reset chat."""
     timeout_minutes = 10
     now = time.time()
     last_active = st.session_state.get("last_activity", now)
@@ -152,27 +176,45 @@ for msg in st.session_state["messages"]:
     align = "right" if msg["role"] == "user" else "left"
     st.markdown(f"<div style='background:{role_color};padding:10px;border-radius:12px;margin:5px;text-align:{align};'>{msg['content']}</div>", unsafe_allow_html=True)
 
-# ---------- Input ----------
-user_query = st.text_input("💬 Type your question:", key=f"chat_input_{st.session_state['input_key']}")
+# ---------- Complaint Mode ----------
+if st.session_state["complaint_mode"]:
+    st.markdown("### 📝 Lodge a Complaint")
+    name = st.text_input("Your Name", key="complaint_name")
+    contact = st.text_input("Contact Number or Email", key="complaint_contact")
+    category = st.selectbox("Complaint Category", ["Admission", "Fees", "Exam", "Facilities", "Other"], key="complaint_category")
+    complaint_text = st.text_area("Describe your complaint", key="complaint_text")
 
-# ---------- Chat Logic ----------
-if user_query:
-    st.session_state["last_activity"] = time.time()  # 🕒 update last activity
-    st.session_state["messages"].append({"role": "user", "content": user_query})
-    docs = load_faq()
-    chain = build_bot(docs)
+    if st.button("📨 Submit Complaint", key="submit_complaint"):
+        if name and contact and complaint_text:
+            save_complaint(name, contact, category, complaint_text)
+            st.success("✅ Your complaint has been recorded successfully. Our team will reach out soon.")
+            time.sleep(4)
+            reset_all()
+            st.rerun()
+        else:
+            st.warning("⚠️ Please fill all required fields before submitting.")
+else:
+    # ---------- Normal Chatbot Behavior ----------
+    unique_key = f"chat_input_{int(time.time())}"  # ✅ unique every rerun
+    user_query = st.text_input("💬 Type your question:", key=unique_key)
 
-    if st.session_state["admission_mode"]:
-        answer = chain.run(f"Admission details for {user_query}")
-    elif st.session_state["schedule_mode"]:
-        answer = chain.run(f"Class schedule for {user_query}")
-    elif st.session_state["fees_mode"]:
-        answer = chain.run(f"Fee details for {user_query}")
-    elif st.session_state["exam_mode"]:
-        answer = chain.run(f"Exam details for {user_query}")
-    else:
-        answer = chain.run(user_query)
+    if user_query:
+        st.session_state["last_activity"] = time.time()
+        st.session_state["messages"].append({"role": "user", "content": user_query})
+        docs = load_faq()
+        chain = build_bot(docs)
 
-    st.session_state["messages"].append({"role": "bot", "content": answer})
-    st.session_state["input_key"] += 1
-    st.rerun()
+        if st.session_state["admission_mode"]:
+            answer = chain.run(f"Admission details for {user_query}")
+        elif st.session_state["schedule_mode"]:
+            answer = chain.run(f"Class schedule for {user_query}")
+        elif st.session_state["fees_mode"]:
+            answer = chain.run(f"Fee details for {user_query}")
+        elif st.session_state["exam_mode"]:
+            answer = chain.run(f"Exam details for {user_query}")
+        else:
+            answer = chain.run(user_query)
+
+        st.session_state["messages"].append({"role": "bot", "content": answer})
+        st.session_state["input_key"] += 1
+        st.rerun()
